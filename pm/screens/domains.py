@@ -15,10 +15,11 @@ class DomainFormModal(ModalScreen[Domain | None]):
     def __init__(self, domain: Domain | None = None) -> None:
         super().__init__()
         self._domain = domain
+        self._vms = load_vms()
 
     def compose(self) -> ComposeResult:
         d    = self._domain
-        vms  = load_vms()
+        vms  = self._vms
         title = f"Editar: {d.dominio}" if d else "Vincular Domínio → VM"
 
         with Vertical(classes="modal-form"):
@@ -29,7 +30,7 @@ class DomainFormModal(ModalScreen[Domain | None]):
                 yield Input(placeholder="ex: n8n.meusite.com", id="f-domain")
 
             yield Label("VM de destino:")
-            vm_opts = [(f"{v.nome}  ({v.ip}) [{v.modo}]", v.nome) for v in vms]
+            vm_opts = [(f"{v.nome} ({v.ip}) — {v.modo.upper()}", v.nome) for v in vms]
             
             # Se o domínio existe mas a VM foi removida, adiciona opção temporária para evitar erro
             if d and d.vm_nome not in [v.nome for v in vms]:
@@ -51,13 +52,28 @@ class DomainFormModal(ModalScreen[Domain | None]):
                 value=d.tipo if d else "ambos", id="f-tipo",
             )
 
-            yield Label("Porta do app na VM (termination):")
-            yield Input(placeholder="ex: 3000, 8080 (deixe vazio para passthrough)",
-                        id="f-bport", value=d.backend_port if d else "")
+            with Vertical(id="container-bport"):
+                yield Label("Porta do app na VM (ex: 8080):")
+                yield Input(placeholder="Porta interna da aplicação",
+                            id="f-bport", value=d.backend_port if d else "")
 
             with Horizontal(classes="modal-footer"):
                 yield Button("Salvar", variant="success", id="btn-save")
                 yield Button("Cancelar", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        # Inicializa visibilidade da porta
+        self._toggle_port_visibility(self.query_one("#f-vm", Select).value)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "f-vm":
+            self._toggle_port_visibility(event.value)
+
+    def _toggle_port_visibility(self, vm_nome: str) -> None:
+        vm = next((v for v in self._vms if v.nome == vm_nome), None)
+        container = self.query_one("#container-bport", Vertical)
+        # Mostra porta apenas se for modo termination
+        container.display = (vm and vm.modo == "termination")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
