@@ -3,6 +3,11 @@
 **Gerenciador de proxy reverso e SSL via terminal (TUI) para Linux**  
 Baseado em [Textual](https://github.com/Textualize/textual) · Python 3 · NGINX
 
+> [!CAUTION]
+> **PROJETO EM DESENVOLVIMENTO (ALPHA/BETA)**  
+> Este gerenciador ainda **não está pronto** para uso em produção crítica. Pode apresentar falhas e nem todas as funções foram testadas exaustivamente. Recomendado atualmente apenas para **estudos e fins experimentais**.
+
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Linux-blue.svg)](https://www.linux.org/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
