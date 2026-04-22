@@ -81,10 +81,16 @@ class VMWizardModal(ModalScreen[VM | None]):
                 self.app.notify("Preencha o IP interno.", severity="warning")
                 self.query_one("#f-ip", Input).focus()
                 return
-            # Check for duplicate names
-            if any(v.nome == nome for v in load_vms()):
+            # Check for duplicate names/IPs
+            all_vms = load_vms()
+            if any(v.nome == nome for v in all_vms):
                 self.app.notify(f"A VM '{nome}' já existe.", severity="error")
                 self.query_one("#f-nome", Input).focus()
+                return
+            if any(v.ip == ip for v in all_vms):
+                other = next(v.nome for v in all_vms if v.ip == ip)
+                self.app.notify(f"O IP {ip} já está em uso pela VM '{other}'.", severity="error")
+                self.query_one("#f-ip", Input).focus()
                 return
             self._show_step(2)
 
@@ -186,6 +192,13 @@ class VMFormModal(ModalScreen[VM | None]):
         https_on = self.query_one("#f-https-on", Select).value
         desc     = self.query_one("#f-desc",     Input).value.strip()
         if not ip:
+            self.query_one("#f-ip", Input).focus()
+            return
+        # Check for duplicate IPs (excluding current VM)
+        all_vms = load_vms()
+        if any(v.ip == ip and v.nome != vm.nome for v in all_vms):
+            other = next(v.nome for v in all_vms if v.ip == ip)
+            self.app.notify(f"O IP {ip} já está em uso pela VM '{other}'.", severity="error")
             self.query_one("#f-ip", Input).focus()
             return
         self.dismiss(VM(vm.nome, ip, vm.porta_http, vm.porta_https, http_on, https_on, modo, desc))
