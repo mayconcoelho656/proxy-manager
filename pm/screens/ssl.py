@@ -69,24 +69,35 @@ class SSLScreen(Vertical):
         bid = event.button.id
         if bid == "btn-issue":
             name = self._selected_domain()
-            if not name:
-                return
-            d = get_domain(name)
-            if d:
-                self.app.push_screen(EmailModal(name), self._do_issue)
+            if name:
+                d = get_domain(name)
+                if d:
+                    self.app.push_screen(EmailModal(name), self._do_issue)
+            else:
+                self.app.notify("Selecione um domínio para emitir SSL.", severity="warning")
+
         elif bid == "btn-import":
             name = self._selected_domain()
             if name:
                 # Usa lambda para ignorar o resultado e forçar refresh_table
                 self.app.push_screen(ManualCertModal(name), lambda r: self.refresh_table())
+            else:
+                self.app.notify("Selecione um domínio para importar certificado.", severity="warning")
+
         elif bid == "btn-renew":
             name = self._selected_domain()
             if name:
                 threading.Thread(target=self._thread_renew, args=(name,), daemon=True).start()
+            else:
+                self.app.notify("Selecione um domínio para renovar.", severity="warning")
+
         elif bid == "btn-revoke":
             name = self._selected_domain()
             if name:
                 self.app.push_screen(ConfirmRevokeModal(name), self._do_revoke)
+            else:
+                self.app.notify("Selecione um domínio para revogar.", severity="warning")
+
         elif bid == "btn-cron":
             active = cb.toggle_cron()
             msg = "[green]Cron ATIVADO (diariamente às 03:00)[/]" if active else "[yellow]Cron DESATIVADO[/]"

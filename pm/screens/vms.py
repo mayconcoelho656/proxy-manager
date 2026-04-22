@@ -81,6 +81,11 @@ class VMWizardModal(ModalScreen[VM | None]):
                 self.app.notify("Preencha o IP interno.", severity="warning")
                 self.query_one("#f-ip", Input).focus()
                 return
+            # Check for duplicate names
+            if any(v.nome == nome for v in load_vms()):
+                self.app.notify(f"A VM '{nome}' já existe.", severity="error")
+                self.query_one("#f-nome", Input).focus()
+                return
             self._show_step(2)
 
         elif bid == "btn-back":
@@ -277,6 +282,9 @@ class VMsScreen(Vertical):
                 vm = get_vm(nome)
                 if vm:
                     self.app.push_screen(VMFormModal(vm), self._on_edit)
+            else:
+                self.app.notify("Selecione uma VM para editar.", severity="warning")
+
         elif event.button.id == "btn-delete":
             nome = self._selected_vm_name()
             if nome:
@@ -285,10 +293,15 @@ class VMsScreen(Vertical):
                 if doms:
                     msg += f"\n\nDomínios que serão removidos:\n" + "\n".join(f"  • {d}" for d in doms)
                 self.app.push_screen(ConfirmDeleteModal(msg), lambda ok: self._on_delete(ok, nome))
+            else:
+                self.app.notify("Selecione uma VM para excluir.", severity="warning")
+
         elif event.button.id == "btn-ports":
             nome = self._selected_vm_name()
             if nome:
                 self.app.push_screen(PortsModal(nome), self._on_ports)
+            else:
+                self.app.notify("Selecione uma VM para gerenciar portas.", severity="warning")
 
     def _on_add(self, vm: VM | None) -> None:
         if vm:

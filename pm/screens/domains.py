@@ -147,6 +147,9 @@ class DomainsScreen(Vertical):
                 d = get_domain(name)
                 if d:
                     self.app.push_screen(DomainFormModal(d), self._on_save)
+            else:
+                self.app.notify("Selecione um domínio para editar.", severity="warning")
+
         elif event.button.id == "btn-delete":
             name = self._selected_domain()
             if name:
@@ -154,6 +157,8 @@ class DomainsScreen(Vertical):
                     ConfirmModal(f"Desvincular o domínio '[bold]{name}[/]'?"),
                     lambda ok: self._on_delete(ok, name),
                 )
+            else:
+                self.app.notify("Selecione um domínio para desvincular.", severity="warning")
         elif event.button.id in ("btn-filter-all", "btn-filter-term", "btn-filter-pass"):
             for btn in self.query(".btn-filter"):
                 btn.remove_class("-active-filter")
