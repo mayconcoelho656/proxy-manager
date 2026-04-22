@@ -13,7 +13,10 @@ Baseado em [Textual](https://github.com/Textualize/textual) · Python 3 · NGINX
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Language](https://img.shields.io/badge/idioma-PT--BR%20only-green.svg)]()
 
+![Dashboard do Proxy Manager](assets/dashboard.png)
+
 ---
+
 
 ## O que é?
 
