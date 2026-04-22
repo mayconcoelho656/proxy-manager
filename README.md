@@ -105,6 +105,20 @@ Internet (1 IP público)
 
 ---
 
+## 🖥️ Compatibilidade de Terminais
+
+A interface TUI utiliza recursos avançados de renderização. Abaixo os terminais testados:
+
+| Status | Terminal |
+|---|---|
+| ✅ **Compatível** | Linux Bash, Windows Terminal |
+| ❌ **Incompatível** | PuTTY, Windows PowerShell, CMD, xterm.js |
+
+> **Dica:** Para a melhor experiência, utilize o **Windows Terminal** no Windows ou terminais nativos modernos no Linux (GNOME Terminal, Konsole, Alacritty, etc.).
+
+
+---
+
 ## Instalação
 
 ```bash
