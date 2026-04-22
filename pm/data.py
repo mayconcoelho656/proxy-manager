@@ -143,7 +143,6 @@ def update_vm(vm: VM) -> None:
 
 def delete_vm(nome: str) -> None:
     save_vms([v for v in load_vms() if v.nome != nome])
-    save_domains([d for d in load_domains() if d.vm_nome != nome])
     log_action(f"VM removida: {nome}")
 
 # ── Domínios ──────────────────────────────────────────────────────────────────

@@ -304,7 +304,7 @@ class VMsScreen(Vertical):
                 doms = [d.dominio for d in load_domains() if d.vm_nome == nome]
                 msg  = f"Excluir a VM '[bold]{nome}[/]'?"
                 if doms:
-                    msg += f"\n\nDomínios que serão removidos:\n" + "\n".join(f"  • {d}" for d in doms)
+                    msg += f"\n\n[yellow]Aviso: {len(doms)} domínio(s) ficarão órfãos.[/]"
                 self.app.push_screen(ConfirmDeleteModal(msg), lambda ok: self._on_delete(ok, nome))
             else:
                 self.app.notify("Selecione uma VM para excluir.", severity="warning")

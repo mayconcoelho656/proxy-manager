@@ -30,8 +30,18 @@ class DomainFormModal(ModalScreen[Domain | None]):
 
             yield Label("VM de destino:")
             vm_opts = [(f"{v.nome}  ({v.ip}) [{v.modo}]", v.nome) for v in vms]
-            yield Select(vm_opts, value=d.vm_nome if d else (vms[0].nome if vms else ""),
-                         id="f-vm")
+            
+            # Se o domínio existe mas a VM foi removida, adiciona opção temporária para evitar erro
+            if d and d.vm_nome not in [v.nome for v in vms]:
+                vm_opts.append((f"[red]Removida ({d.vm_nome})[/]", d.vm_nome))
+
+            current_val = ""
+            if d:
+                current_val = d.vm_nome
+            elif vms:
+                current_val = vms[0].nome
+
+            yield Select(vm_opts, value=current_val, id="f-vm")
 
             yield Label("Tipo de tráfego:")
             yield Select(
@@ -62,7 +72,11 @@ class DomainFormModal(ModalScreen[Domain | None]):
         bport   = self.query_one("#f-bport", Input).value.strip()
         email   = d.email_ssl if d else ""
 
-        if not dominio or not vm_nome:
+        if not dominio:
+            self.app.notify("Preencha o domínio.", severity="warning")
+            return
+        if not vm_nome:
+            self.app.notify("Selecione uma VM de destino.", severity="warning")
             return
 
         self.dismiss(Domain(dominio, vm_nome, tipo, bport, email))
@@ -117,15 +131,20 @@ class DomainsScreen(Vertical):
         count   = 0
         for d in domains:
             vm   = vms.get(d.vm_nome)
-            modo = vm.modo if vm else "?"
-            
+            vm_display = d.vm_nome
+            if not vm:
+                vm_display = f"[red]Removido ({d.vm_nome})[/]"
+                modo = "[red]?[/]"
+            else:
+                modo = vm.modo
+
             if hasattr(self, "_current_filter"):
                 if self._current_filter == "termination" and modo != "termination": continue
                 if self._current_filter == "passthrough" and modo != "passthrough": continue
 
             ssl  = "[green]OK[/]" if d.has_cert else ("[dim]sem cert[/]" if modo == "termination" else "[dim]n/a[/]")
             bp   = d.backend_port or "-"
-            t.add_row(d.dominio, d.vm_nome, d.tipo, bp, modo, ssl, key=d.dominio)
+            t.add_row(d.dominio, vm_display, d.tipo, bp, modo, ssl, key=d.dominio)
             count += 1
             
         filter_str = f" | Filtro: {self._current_filter.upper()}" if hasattr(self, "_current_filter") else ""
