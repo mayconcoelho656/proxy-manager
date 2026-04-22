@@ -87,6 +87,7 @@ class ProxyManagerApp(App):
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if event.tab and event.tab.id:
             self.query_one("#content-switcher", ContentSwitcher).current = f"screen-{event.tab.id}"
+            self.action_refresh()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-top-refresh":
@@ -97,6 +98,7 @@ class ProxyManagerApp(App):
     def action_switch_tab(self, tab_id: str) -> None:
         self.query_one("#tabs", Tabs).active = tab_id
         self.query_one("#content-switcher", ContentSwitcher).current = f"screen-{tab_id}"
+        self.action_refresh()
 
     def action_help(self) -> None:
         self.push_screen(HelpModal())
