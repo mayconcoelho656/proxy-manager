@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 #  PROXY MANAGER — Instalador
-#  Suporte: Debian 11/12 · Ubuntu 22.04/24.04
+#  Suporte: Debian 11/12/13 · Ubuntu 22.04/24.04
 # ============================================================
 
 set -e
@@ -53,25 +53,23 @@ if [[ ${#APT_PKGS[@]} -gt 0 ]]; then
 fi
 _ok "nginx, certbot, git, python3, openssl: OK"
 
-# ── 2. Módulo Stream do NGINX ─────────────────────────────────
+# ── 2. Módulo Stream do NGINX ────────────────────────────────────
 _sep
-_log "Verificando modulo stream do NGINX..."
-STREAM_OK=0
-nginx -V 2>&1 | grep -q "with-stream"               && STREAM_OK=1
-dpkg -l libnginx-mod-stream 2>/dev/null | grep -q "^ii" && STREAM_OK=1
-
-if [[ $STREAM_OK -eq 0 ]]; then
-    _warn "Modulo stream nao encontrado — instalando libnginx-mod-stream..."
-    if apt-get install -y libnginx-mod-stream &>/dev/null; then
-        _ok "libnginx-mod-stream instalado"
-    else
-        _warn "Nao foi possivel instalar libnginx-mod-stream."
-        _warn "Instale manualmente: apt install libnginx-mod-stream"
-        read -rp "  Continuar mesmo assim? [s/N] " ans
-        [[ "$ans" =~ ^[sS]$ ]] || exit 1
-    fi
+_log "Instalando modulo stream do NGINX (libnginx-mod-stream)..."
+# Sempre instala/verifica o pacote para garantir o arquivo em modules-enabled/
+if apt-get install -y libnginx-mod-stream &>/dev/null; then
+    _ok "libnginx-mod-stream instalado/atualizado"
 else
-    _ok "Modulo NGINX stream disponivel"
+    _warn "Nao foi possivel instalar libnginx-mod-stream."
+    _warn "Instale manualmente: apt install libnginx-mod-stream"
+    read -rp "  Continuar mesmo assim? [s/N] " ans
+    [[ "$ans" =~ ^[sS]$ ]] || exit 1
+fi
+# Verificacao final
+if ls /etc/nginx/modules-enabled/*stream* &>/dev/null || nginx -V 2>&1 | grep -q "with-stream"; then
+    _ok "Modulo NGINX stream confirmado"
+else
+    _warn "Modulo stream pode nao estar ativo — verifique /etc/nginx/modules-enabled/"
 fi
 
 # ── 3. Diretórios e arquivos de dados ────────────────────────
@@ -91,7 +89,17 @@ _ok "$STREAM_DIR  (configs NGINX stream)"
 _ok "/var/www/certbot  (webroot ACME)"
 _ok "/var/log/proxy-manager.log"
 
-# ── 4. Configurar nginx.conf para bloco stream ────────────────
+# ── 4. Desativar site default do NGINX ────────────────────────────────────
+_sep
+_log "Desativando site 'default' do NGINX (interfere com o Porteiro)..."
+if [[ -L "/etc/nginx/sites-enabled/default" ]]; then
+    rm -f /etc/nginx/sites-enabled/default
+    _ok "Site default removido de sites-enabled/"
+else
+    _ok "Site default ja estava inativo"
+fi
+
+# ── 5. Configurar nginx.conf para bloco stream ────────────────────────────
 _sep
 _log "Configurando nginx.conf para bloco stream..."
 if grep -q "stream.conf.d" "$NGINX_CONF" 2>/dev/null; then
@@ -100,28 +108,22 @@ else
     cp "$NGINX_CONF" "${NGINX_CONF}.bak-proxy-manager"
     _ok "Backup: ${NGINX_CONF}.bak-proxy-manager"
 
-    last_brace=$(grep -n '^}' "$NGINX_CONF" | tail -1 | cut -d: -f1)
-    insert_block=$(printf '\n# Proxy Manager — stream routing (porta 443, SNI)\ninclude %s/*.conf;' "$STREAM_DIR")
-
-    if [[ -n "$last_brace" ]]; then
-        awk -v line="$last_brace" -v block="$insert_block" \
-            'NR == line { print; print block; next } { print }' \
-            "$NGINX_CONF" > "${NGINX_CONF}.tmp" && mv "${NGINX_CONF}.tmp" "$NGINX_CONF"
-    else
-        printf '%s\n' "$insert_block" >> "$NGINX_CONF"
-    fi
+    # Adiciona o include NO FINAL do arquivo (fora do bloco http{})
+    # Isso é necessário pois o bloco stream{} deve estar no nível raiz do nginx.conf
+    printf '\n# Proxy Manager — stream routing (porta 443, SNI)\ninclude %s/*.conf;\n' \
+        "$STREAM_DIR" >> "$NGINX_CONF"
 
     if nginx -t 2>/dev/null; then
-        _ok "nginx.conf atualizado e validado"
+        _ok "nginx.conf atualizado e validado (stream no nivel raiz)"
     else
         _warn "nginx.conf com erros — restaurando backup..."
         cp "${NGINX_CONF}.bak-proxy-manager" "$NGINX_CONF"
-        _warn "Adicione manualmente ao final do nginx.conf (fora do http{}):"
+        _warn "Adicione manualmente ao FINAL do nginx.conf (fora do http{}):"
         _warn "  include ${STREAM_DIR}/*.conf;"
     fi
 fi
 
-# ── 5. Python venv e dependências ────────────────────────────
+# ── 6. Python venv e dependências ────────────────────────────────────
 _sep
 _log "Configurando ambiente Python (venv)..."
 if [[ ! -f "$VENV/bin/python3" ]]; then
@@ -136,7 +138,7 @@ _log "Instalando dependencias Python (textual, rich)..."
 "$VENV/bin/pip" install -r "$SCRIPT_DIR/requirements.txt" --quiet
 _ok "Dependencias Python instaladas"
 
-# ── 6. Wrapper executável em /usr/local/bin ───────────────────
+# ── 7. Wrapper executável em /usr/local/bin ────────────────────────────
 _sep
 _log "Criando comando global 'proxy-manager'..."
 
@@ -150,10 +152,10 @@ EOF
 chmod +x "$INSTALL_BIN"
 _ok "Comando instalado: $INSTALL_BIN"
 
-# ── 7. Permissões do proxy-manager.py ────────────────────────
+# ── 8. Permissões do proxy-manager.py ──────────────────────────────────
 chmod +x "$SCRIPT_DIR/proxy-manager.py"
 
-# ── 8. Testar NGINX ──────────────────────────────────────────
+# ── 9. Testar NGINX ─────────────────────────────────────────────────────
 _sep
 _log "Testando configuracao do NGINX..."
 if nginx -t 2>/dev/null; then

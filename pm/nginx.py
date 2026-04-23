@@ -29,19 +29,30 @@ def _header() -> list[str]:
 def _gen_http() -> str:
     """
     Porta 80 (HTTP):
-    - Termination: serve /.well-known/acme-challenge (Certbot) e redireciona tudo mais para HTTPS.
-    - Passthrough: encaminha o tráfego HTTP para a VM (stream/proxy_pass) se http_on == "on".
+    - Termination: serve /.well-known/acme-challenge (Certbot local) e redireciona para HTTPS.
+    - Passthrough (http_on=on):  encaminha TODO o tráfego HTTP para a VM.
+    - Passthrough (http_on=off): encaminha APENAS /.well-known/acme-challenge/ para a VM
+      (permite que o proxy interno da VM responda ao desafio Let's Encrypt);
+      todo o restante do tráfego HTTP retorna 444 (conexão fechada).
     """
     lines = _header()
     for d in load_domains():
         vm = get_vm(d.vm_nome)
-        if not vm or vm.http_on == "off" or vm.ativo != "on":
+        if not vm or vm.ativo != "on":
             continue
 
         lines += [f"server {{", f"    listen 80;", f"    server_name {d.dominio};", ""]
 
         if vm.modo == "termination":
-            # Sempre serve o acme-challenge para o Certbot
+            if vm.http_on == "off":
+                # Termination com HTTP off: ignora completamente
+                lines.pop()  # remove o cabeçalho server{ que acabamos de adicionar
+                lines.pop()  # server_name
+                lines.pop()  # listen
+                lines.pop()  # server {
+                continue
+
+            # Sempre serve o acme-challenge local (Certbot do Porteiro)
             lines += [
                 "    location /.well-known/acme-challenge/ {",
                 "        root /var/www/certbot;",
@@ -49,14 +60,12 @@ def _gen_http() -> str:
             ]
             cert, _ = d.cert_path
             if cert:
-                # Certificado emitido: redireciona HTTP → HTTPS
                 lines += [
                     "    location / {",
                     "        return 301 https://$host$request_uri;",
                     "    }",
                 ]
             else:
-                # Sem certificado ainda: serve direto via HTTP enquanto aguarda Certbot
                 bp = d.backend_port or "80"
                 lines += [
                     "    location / {",
@@ -65,16 +74,34 @@ def _gen_http() -> str:
                     "        proxy_set_header X-Real-IP $remote_addr;",
                     "    }",
                 ]
+
         else:
-            # Passthrough: encaminha HTTP direto para a VM
+            # Passthrough: SEMPRE encaminha /.well-known/acme-challenge/ para a VM
+            # (o proxy interno da VM responde ao desafio Let's Encrypt)
             lines += [
-                "    location / {",
+                "    location /.well-known/acme-challenge/ {",
                 f"        proxy_pass http://{vm.ip}:{vm.porta_http};",
                 "        proxy_set_header Host $host;",
                 "        proxy_set_header X-Real-IP $remote_addr;",
-                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
                 "    }",
             ]
+            if vm.http_on == "on":
+                # HTTP ativo: encaminha todo o tráfego HTTP para a VM
+                lines += [
+                    "    location / {",
+                    f"        proxy_pass http://{vm.ip}:{vm.porta_http};",
+                    "        proxy_set_header Host $host;",
+                    "        proxy_set_header X-Real-IP $remote_addr;",
+                    "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                    "    }",
+                ]
+            else:
+                # HTTP desativado: bloqueia tráfego geral (fecha conexão silenciosamente)
+                lines += [
+                    "    location / {",
+                    "        return 444;",
+                    "    }",
+                ]
 
         lines += ["}", ""]
     return "\n".join(lines)
