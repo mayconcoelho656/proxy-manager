@@ -7,6 +7,7 @@ from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual import work
 
 from pm.data import VM, load_vms, load_domains, add_vm, update_vm, delete_vm, get_vm
+from pm.nginx import generate_nginx, reload_nginx
 
 
 # ── Modal: Wizard de Nova VM (2 etapas) ──────────────────────────────────────
@@ -36,23 +37,26 @@ class VMWizardModal(ModalScreen[VM | None]):
                 yield Label("Modo SSL:")
                 yield Select(
                     [("passthrough — VM tem proxy próprio (Traefik, Caddy)", "passthrough"),
-                     ("termination — Porteiro gera SSL via Certbot", "termination")],
+                     ("termination — Porteiro gera SSL via Certbot",         "termination")],
                     value="passthrough", id="f-modo",
                 )
-                yield Label("HTTP (porta 80):")
-                yield Select(
-                    [("on  — encaminhar HTTP", "on"), ("off — bloquear HTTP", "off")],
-                    value="on", id="f-http-on",
-                )
-                yield Label("HTTPS (porta 443):")
-                yield Select(
-                    [("on  — encaminhar HTTPS", "on"), ("off — bloquear HTTPS", "off")],
-                    value="on", id="f-https-on",
+                # HTTP on/off: apenas relevante para Passthrough.
+                # No Termination, HTTP fica sempre ON (Certbot + redirect para HTTPS).
+                with Vertical(id="container-http"):
+                    yield Label("HTTP (porta 80):")
+                    yield Select(
+                        [("on  — encaminhar HTTP", "on"), ("off — bloquear HTTP", "off")],
+                        value="on", id="f-http-on",
+                    )
+                # HTTPS é sempre ON — não há seletor
+                yield Static(
+                    "[dim]HTTPS (porta 443): sempre ✔ ativo[/]",
+                    id="label-https-always-on"
                 )
                 with Horizontal(classes="modal-footer"):
-                    yield Button("← Voltar",  id="btn-back",   variant="default")
-                    yield Button("Testar",     id="btn-test",   variant="primary")
-                    yield Button("Finalizar",  id="btn-save",   variant="success")
+                    yield Button("← Voltar",  id="btn-back",  variant="default")
+                    yield Button("Testar",    id="btn-test",  variant="primary")
+                    yield Button("Finalizar", id="btn-save",  variant="success")
 
     def on_mount(self) -> None:
         self._show_step(1)
@@ -63,6 +67,20 @@ class VMWizardModal(ModalScreen[VM | None]):
         label = "Etapa 1 de 2 — Identificação" if step == 1 else "Etapa 2 de 2 — Configuração de Rede"
         self.query_one("#wizard-step-label", Static).update(f"[dim]{label}[/]")
         self._step = step
+        if step == 2:
+            self._update_http_visibility()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "f-modo":
+            self._update_http_visibility()
+
+    def _update_http_visibility(self) -> None:
+        """Mostra o seletor HTTP apenas para modo passthrough."""
+        try:
+            modo = self.query_one("#f-modo", Select).value
+            self.query_one("#container-http").display = (modo == "passthrough")
+        except Exception:
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -81,7 +99,6 @@ class VMWizardModal(ModalScreen[VM | None]):
                 self.app.notify("Preencha o IP interno.", severity="warning")
                 self.query_one("#f-ip", Input).focus()
                 return
-            # Check for duplicate names/IPs
             all_vms = load_vms()
             if any(v.nome == nome for v in all_vms):
                 self.app.notify(f"A VM '{nome}' já existe.", severity="error")
@@ -98,19 +115,21 @@ class VMWizardModal(ModalScreen[VM | None]):
             self._show_step(1)
 
         elif bid == "btn-test":
-            ip      = self.query_one("#f-ip",      Input).value.strip()
-            http_on = self.query_one("#f-http-on", Select).value
-            port    = "80" if http_on == "on" else "443"
+            ip = self.query_one("#f-ip", Input).value.strip()
             if ip:
-                self.test_connectivity(ip, port)
+                self.test_connectivity(ip, "443")
 
         elif bid == "btn-save":
-            nome     = self.query_one("#f-nome",     Input).value.strip()
-            desc     = self.query_one("#f-desc",     Input).value.strip()
-            ip       = self.query_one("#f-ip",       Input).value.strip()
-            modo     = self.query_one("#f-modo",     Select).value
-            http_on  = self.query_one("#f-http-on",  Select).value
-            https_on = self.query_one("#f-https-on", Select).value
+            nome  = self.query_one("#f-nome", Input).value.strip()
+            desc  = self.query_one("#f-desc", Input).value.strip()
+            ip    = self.query_one("#f-ip",   Input).value.strip()
+            modo  = self.query_one("#f-modo", Select).value
+            # HTTP: configurável apenas no passthrough; termination sempre ON
+            if modo == "passthrough":
+                http_on = self.query_one("#f-http-on", Select).value
+            else:
+                http_on = "on"
+            https_on = "on"  # HTTPS sempre ativo
             self.dismiss(VM(nome, ip, "80", "443", http_on, https_on, modo, desc))
 
     @work(exclusive=True)
@@ -131,7 +150,7 @@ class VMWizardModal(ModalScreen[VM | None]):
             reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, p), timeout=2.0)
             writer.close()
             await writer.wait_closed()
-            self.app.notify(f"✅ Sucesso! Ping OK e porta {p} aberta em {ip}.", severity="information")
+            self.app.notify(f"✔ Sucesso! Ping OK e porta {p} aberta em {ip}.", severity="information")
         except Exception:
             self.app.notify(f"⚠ Ping OK em {ip}, mas a porta {port} parece fechada.", severity="warning")
 
@@ -154,19 +173,17 @@ class VMFormModal(ModalScreen[VM | None]):
             yield Label("Modo SSL:")
             yield Select(
                 [("passthrough — VM tem proxy próprio (Traefik, Caddy)", "passthrough"),
-                 ("termination — Porteiro gera SSL via Certbot", "termination")],
+                 ("termination — Porteiro gera SSL via Certbot",         "termination")],
                 value=vm.modo, id="f-modo",
             )
-            yield Label("HTTP (porta 80):")
-            yield Select(
-                [("on  — encaminhar HTTP", "on"), ("off — bloquear HTTP", "off")],
-                value=vm.http_on, id="f-http-on",
-            )
-            yield Label("HTTPS (porta 443):")
-            yield Select(
-                [("on  — encaminhar HTTPS", "on"), ("off — bloquear HTTPS", "off")],
-                value=vm.https_on, id="f-https-on",
-            )
+            # HTTP on/off: apenas para passthrough
+            with Vertical(id="container-http"):
+                yield Label("HTTP (porta 80):")
+                yield Select(
+                    [("on  — encaminhar HTTP", "on"), ("off — bloquear HTTP", "off")],
+                    value=vm.http_on, id="f-http-on",
+                )
+            yield Static("[dim]HTTPS (porta 443): sempre ✔ ativo[/]", id="label-https")
             yield Label("Descrição:")
             yield Input(placeholder="ex: Docker Apps", id="f-desc", value=vm.descricao)
             with Horizontal(classes="modal-footer"):
@@ -174,33 +191,49 @@ class VMFormModal(ModalScreen[VM | None]):
                 yield Button("Salvar",   variant="success", id="btn-save")
                 yield Button("Cancelar", id="btn-cancel")
 
+    def on_mount(self) -> None:
+        self._update_http_visibility()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "f-modo":
+            self._update_http_visibility()
+
+    def _update_http_visibility(self) -> None:
+        try:
+            modo = self.query_one("#f-modo", Select).value
+            self.query_one("#container-http").display = (modo == "passthrough")
+        except Exception:
+            pass
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
             self.dismiss(None)
             return
         if event.button.id == "btn-test":
             ip = self.query_one("#f-ip", Input).value.strip()
-            http_on = self.query_one("#f-http-on", Select).value
-            port = "80" if http_on == "on" else "443"
             if ip:
-                self.test_connectivity(ip, port)
+                self.test_connectivity(ip, "443")
             return
-        vm = self._vm
-        ip       = self.query_one("#f-ip",       Input).value.strip()
-        modo     = self.query_one("#f-modo",     Select).value
-        http_on  = self.query_one("#f-http-on",  Select).value
-        https_on = self.query_one("#f-https-on", Select).value
-        desc     = self.query_one("#f-desc",     Input).value.strip()
+        vm   = self._vm
+        ip   = self.query_one("#f-ip",   Input).value.strip()
+        modo = self.query_one("#f-modo", Select).value
+        desc = self.query_one("#f-desc", Input).value.strip()
         if not ip:
+            self.app.notify("Preencha o IP interno.", severity="warning")
             self.query_one("#f-ip", Input).focus()
             return
-        # Check for duplicate IPs (excluding current VM)
         all_vms = load_vms()
         if any(v.ip == ip and v.nome != vm.nome for v in all_vms):
             other = next(v.nome for v in all_vms if v.ip == ip)
             self.app.notify(f"O IP {ip} já está em uso pela VM '{other}'.", severity="error")
             self.query_one("#f-ip", Input).focus()
             return
+        # HTTP: configurável apenas no passthrough
+        if modo == "passthrough":
+            http_on = self.query_one("#f-http-on", Select).value
+        else:
+            http_on = "on"
+        https_on = "on"
         self.dismiss(VM(vm.nome, ip, vm.porta_http, vm.porta_https, http_on, https_on, modo, desc))
 
     @work(exclusive=True)
@@ -221,11 +254,53 @@ class VMFormModal(ModalScreen[VM | None]):
             reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, p), timeout=2.0)
             writer.close()
             await writer.wait_closed()
-            self.app.notify(f"✅ Sucesso! Ping OK e porta {p} aberta em {ip}.", severity="information")
+            self.app.notify(f"✔ Sucesso! Ping OK e porta {p} aberta em {ip}.", severity="information")
         except Exception:
             self.app.notify(f"⚠ Ping OK em {ip}, mas a porta {port} parece fechada.", severity="warning")
 
 
+# ── Modal: Domínios da VM ────────────────────────────────────────────────────
+
+class VMDomainsModal(ModalScreen[None]):
+    """Exibe os domínios vinculados a uma VM."""
+
+    def __init__(self, vm: VM) -> None:
+        super().__init__()
+        self._vm = vm
+
+    def compose(self) -> ComposeResult:
+        vm = self._vm
+        domains = [d for d in load_domains() if d.vm_nome == vm.nome]
+        with Vertical(classes="modal-form"):
+            yield Label(
+                f"🌐 Domínios vinculados — {vm.nome} ({vm.ip})",
+                classes="modal-title"
+            )
+            yield Static(
+                f"[dim]Modo: {vm.modo.upper()} | HTTP: {'✔' if vm.http_on == 'on' else '❌'} | HTTPS: ✔[/]"
+            )
+            if not domains:
+                yield Static("[dim]  Nenhum domínio vinculado a esta VM.[/]")
+            else:
+                yield DataTable(id="vm-domains-table", cursor_type="row")
+            with Horizontal(classes="modal-footer"):
+                yield Button("Fechar", variant="primary", id="btn-close")
+
+    def on_mount(self) -> None:
+        domains = [d for d in load_domains() if d.vm_nome == self._vm.nome]
+        if not domains:
+            return
+        t = self.query_one("#vm-domains-table", DataTable)
+        t.add_columns("Domínio", "Backend", "SSL")
+        for d in domains:
+            ssl = "[green]✔ OK[/]" if d.has_cert else (
+                "[red]sem cert[/]" if self._vm.modo == "termination" else "[dim]n/a[/]"
+            )
+            bp = d.backend_port or "-"
+            t.add_row(d.dominio, bp, ssl)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
 
 
 # ── Modal: Confirmar exclusão ─────────────────────────────────────────────────
@@ -247,22 +322,49 @@ class ConfirmDeleteModal(ModalScreen[bool]):
         self.dismiss(event.button.id == "btn-yes")
 
 
+# ── Modal: Confirmação genérica (label e variante customizáveis) ─────────────────
+
+class ConfirmActionModal(ModalScreen[bool]):
+    def __init__(self, title: str, msg: str,
+                 confirm_label: str = "Confirmar",
+                 confirm_variant: str = "warning") -> None:
+        super().__init__()
+        self._title          = title
+        self._msg            = msg
+        self._confirm_label  = confirm_label
+        self._confirm_variant = confirm_variant
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modal-form"):
+            yield Label(self._title, classes="modal-title")
+            yield Static(self._msg)
+            with Horizontal(classes="modal-footer"):
+                yield Button(self._confirm_label, variant=self._confirm_variant, id="btn-yes")
+                yield Button("Cancelar", id="btn-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "btn-yes")
+
+
+
 # ── Tela principal de VMs ─────────────────────────────────────────────────────
 
 class VMsScreen(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="toolbar"):
-            yield Button("＋ Nova VM",  id="btn-add",    classes="btn-add")
-            yield Button("✎ Editar",    id="btn-edit",   classes="btn-edit")
-            yield Button("✕ Excluir",   id="btn-delete", classes="btn-delete")
-            yield Button("⇄ Portas",    id="btn-ports",  classes="btn-apply")
+            yield Button("＋ Nova VM",    id="btn-add",     classes="btn-add")
+            yield Button("✎ Editar",      id="btn-edit",    classes="btn-edit")
+            yield Button("✕ Excluir",     id="btn-delete",  classes="btn-delete")
+            yield Button("⇄ Portas",      id="btn-ports",   classes="btn-apply")
+            yield Button("🌐 Domínios",   id="btn-domains", classes="btn-apply")
+            yield Button("⏯ Ativar/Pausar", id="btn-toggle", classes="btn-edit")
         yield DataTable(id="vms-table", cursor_type="row")
         yield Static("", id="vm-status-bar", classes="muted-text")
 
     def on_mount(self) -> None:
         t = self.query_one("#vms-table", DataTable)
-        t.add_columns("Nome", "IP", "HTTP", "HTTPS", "Modo", "Desc", "Doms")
+        t.add_columns("Status", "Nome", "IP", "HTTP", "HTTPS", "Modo", "Desc", "Doms")
         self.refresh_table()
 
     def refresh_table(self) -> None:
@@ -272,9 +374,14 @@ class VMsScreen(Vertical):
         domains = load_domains()
         for vm in vms:
             dom_count = sum(1 for d in domains if d.vm_nome == vm.nome)
-            h = f"[green]{vm.porta_http}[/]"  if vm.http_on  == "on" else "[red]✕[/]"
-            s = f"[green]{vm.porta_https}[/]" if vm.https_on == "on" else "[red]✕[/]"
-            t.add_row(vm.nome, vm.ip, h, s, vm.modo, vm.descricao, str(dom_count),
+            h = "✔" if vm.http_on  == "on" else "❌"
+            s = "✔"  # HTTPS sempre ativo
+            modo_disp = (
+                "[cyan]TERMINATION[/]" if vm.modo == "termination"
+                else "[dim]PASSTHROUGH[/]"
+            )
+            status = "[green]● Ativo[/]" if vm.ativo == "on" else "[red]○ Inativo[/]"
+            t.add_row(status, vm.nome, vm.ip, h, s, modo_disp, vm.descricao, str(dom_count),
                       key=vm.nome)
         bar = self.query_one("#vm-status-bar", Static)
         bar.update(f"  {len(vms)} VM(s) cadastrada(s)")
@@ -284,7 +391,8 @@ class VMsScreen(Vertical):
         if t.row_count == 0:
             return None
         row = t.get_row_at(t.cursor_row)
-        return str(row[0]) if row else None
+        # Status agora é a coluna 0, Nome é a coluna 1
+        return str(row[1]) if row else None
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-add":
@@ -312,9 +420,65 @@ class VMsScreen(Vertical):
         elif event.button.id == "btn-ports":
             nome = self._selected_vm_name()
             if nome:
-                self.app.push_screen(PortsModal(nome), self._on_ports)
+                vm = get_vm(nome)
+                if vm and vm.modo == "passthrough":
+                    self.app.push_screen(PortsModal(nome), self._on_ports)
+                elif vm and vm.modo == "termination":
+                    self.app.notify(
+                        "VMs em modo Termination sempre recebem HTTP (Certbot) e HTTPS.",
+                        severity="information"
+                    )
             else:
                 self.app.notify("Selecione uma VM para gerenciar portas.", severity="warning")
+
+        elif event.button.id == "btn-domains":
+            nome = self._selected_vm_name()
+            if nome:
+                vm = get_vm(nome)
+                if vm:
+                    self.app.push_screen(VMDomainsModal(vm))
+            else:
+                self.app.notify("Selecione uma VM para ver os domínios.", severity="warning")
+
+        elif event.button.id == "btn-toggle":
+            nome = self._selected_vm_name()
+            if nome:
+                vm = get_vm(nome)
+                if vm:
+                    if vm.ativo == "on":
+                        # Desativar: pede confirmação
+                        doms = [d.dominio for d in load_domains() if d.vm_nome == nome]
+                        msg  = f"Tem certeza que deseja [bold]desativar[/] a VM '[bold]{nome}[/]'?\n"
+                        msg += "\n[yellow]O NGINX será recarregado e esta VM deixará de receber tráfego.[/]"
+                        if doms:
+                            msg += f"\n\n[dim]Domínios afetados: {', '.join(doms)}[/]"
+                        self.app.push_screen(
+                            ConfirmActionModal(
+                                title="⏸ Desativar VM",
+                                msg=msg,
+                                confirm_label="Desativar",
+                                confirm_variant="error",
+                            ),
+                            lambda ok, v=vm: self._on_toggle_confirm(ok, v, "off")
+                        )
+                    else:
+                        # Ativar: pede confirmação
+                        doms = [d.dominio for d in load_domains() if d.vm_nome == nome]
+                        msg  = f"Tem certeza que deseja [bold]ativar[/] a VM '[bold]{nome}[/]'?\n"
+                        msg += "\n[green]O NGINX será recarregado e os domínios voltam a receber tráfego.[/]"
+                        if doms:
+                            msg += f"\n\n[dim]Domínios que voltam: {', '.join(doms)}[/]"
+                        self.app.push_screen(
+                            ConfirmActionModal(
+                                title="▶ Ativar VM",
+                                msg=msg,
+                                confirm_label="Ativar",
+                                confirm_variant="success",
+                            ),
+                            lambda ok, v=vm: self._on_toggle_confirm(ok, v, "on")
+                        )
+            else:
+                self.app.notify("Selecione uma VM para ativar/pausar.", severity="warning")
 
     def _on_add(self, vm: VM | None) -> None:
         if vm:
@@ -334,8 +498,36 @@ class VMsScreen(Vertical):
     def _on_ports(self, _: None) -> None:
         self.refresh_table()
 
+    def _on_toggle_confirm(self, ok: bool, vm: VM, novo_estado: str) -> None:
+        """Callback da confirmação de ativar/desativar: salva, gera NGINX e recarrega."""
+        if not ok:
+            return
+        vm.ativo = novo_estado
+        update_vm(vm)
+        self.refresh_table()
+        acao_msg = "desativada" if novo_estado == "off" else "reativada"
+        self.app.notify(f"VM '{vm.nome}' {acao_msg}. Aplicando NGINX...", severity="warning")
+        import threading
+        threading.Thread(target=self._thread_nginx_reload, args=(vm.nome, acao_msg), daemon=True).start()
 
-# ── Modal: Ativar/Desativar portas ────────────────────────────────────────────
+    def _thread_nginx_reload(self, nome: str, acao: str = "atualizada") -> None:
+        generate_nginx()
+        ok, err = reload_nginx()
+        if ok:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"✔ NGINX recarregado — VM '{nome}' {acao}.",
+                severity="information"
+            )
+        else:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"❌ Erro ao recarregar NGINX: {err[:100]}",
+                severity="error"
+            )
+
+
+# ── Modal: Ativar/Desativar portas (apenas Passthrough) ──────────────────────
 
 class PortsModal(ModalScreen[None]):
     def __init__(self, nome: str) -> None:
@@ -347,15 +539,11 @@ class PortsModal(ModalScreen[None]):
         with Vertical(classes="modal-form"):
             yield Label(f"Portas — {self._nome} ({vm.ip if vm else ''})",
                         classes="modal-title")
-            yield Label("HTTP:")
+            yield Static("[dim]HTTPS (443): sempre ✔ ativo[/]")
+            yield Label("HTTP (porta 80):")
             yield Select(
                 [("on — encaminhar HTTP", "on"), ("off — bloquear HTTP", "off")],
                 value=vm.http_on if vm else "on", id="p-http",
-            )
-            yield Label("HTTPS:")
-            yield Select(
-                [("on — encaminhar HTTPS", "on"), ("off — bloquear HTTPS", "off")],
-                value=vm.https_on if vm else "on", id="p-https",
             )
             with Horizontal(classes="modal-footer"):
                 yield Button("Salvar", variant="success", id="btn-save")
@@ -367,7 +555,7 @@ class PortsModal(ModalScreen[None]):
             return
         vm = get_vm(self._nome)
         if vm:
-            vm.http_on  = self.query_one("#p-http",  Select).value
-            vm.https_on = self.query_one("#p-https", Select).value
+            vm.http_on  = self.query_one("#p-http", Select).value
+            vm.https_on = "on"  # sempre ON
             update_vm(vm)
         self.dismiss(None)

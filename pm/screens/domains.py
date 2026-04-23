@@ -31,7 +31,7 @@ class DomainFormModal(ModalScreen[Domain | None]):
 
             yield Label("VM de destino:")
             vm_opts = [(f"{v.nome} ({v.ip}) — {v.modo.upper()}", v.nome) for v in vms]
-            
+
             # Se o domínio existe mas a VM foi removida, adiciona opção temporária para evitar erro
             if d and d.vm_nome not in [v.nome for v in vms]:
                 vm_opts.append((f"[red]Removida ({d.vm_nome})[/]", d.vm_nome))
@@ -44,14 +44,6 @@ class DomainFormModal(ModalScreen[Domain | None]):
 
             yield Select(vm_opts, value=current_val, id="f-vm")
 
-            yield Label("Tipo de tráfego:")
-            yield Select(
-                [("ambos — HTTP + HTTPS", "ambos"),
-                 ("http  — Apenas HTTP",   "http"),
-                 ("https — Apenas HTTPS",  "https")],
-                value=d.tipo if d else "ambos", id="f-tipo",
-            )
-
             with Vertical(id="container-bport"):
                 yield Label("Porta do app na VM (ex: 8080):")
                 yield Input(placeholder="Porta interna da aplicação",
@@ -62,7 +54,6 @@ class DomainFormModal(ModalScreen[Domain | None]):
                 yield Button("Cancelar", id="btn-cancel")
 
     def on_mount(self) -> None:
-        # Inicializa visibilidade da porta
         self._toggle_port_visibility(self.query_one("#f-vm", Select).value)
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -73,7 +64,7 @@ class DomainFormModal(ModalScreen[Domain | None]):
         vm = next((v for v in self._vms if v.nome == vm_nome), None)
         container = self.query_one("#container-bport", Vertical)
         # Mostra porta apenas se for modo termination
-        container.display = (vm and vm.modo == "termination")
+        container.display = bool(vm and vm.modo == "termination")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
@@ -83,10 +74,10 @@ class DomainFormModal(ModalScreen[Domain | None]):
         d       = self._domain
         dominio = d.dominio if d else self.query_one("#f-domain", Input).value.strip()
         dominio = dominio.replace("https://", "").replace("http://", "").split("/")[0]
-        vm_nome = self.query_one("#f-vm",    Select).value
-        tipo    = self.query_one("#f-tipo",  Select).value
+        vm_nome = self.query_one("#f-vm", Select).value
         bport   = self.query_one("#f-bport", Input).value.strip()
         email   = d.email_ssl if d else ""
+        auto    = d.auto_renew if d else "on"
 
         if not dominio:
             self.app.notify("Preencha o domínio.", severity="warning")
@@ -95,7 +86,8 @@ class DomainFormModal(ModalScreen[Domain | None]):
             self.app.notify("Selecione uma VM de destino.", severity="warning")
             return
 
-        self.dismiss(Domain(dominio, vm_nome, tipo, bport, email))
+        # Tipo é sempre "ambos" — o comportamento é definido pelo modo e portas da VM
+        self.dismiss(Domain(dominio, vm_nome, "ambos", bport, email, auto))
 
 
 # ── Modal: Confirmar exclusão ─────────────────────────────────────────────────
@@ -127,7 +119,7 @@ class DomainsScreen(Vertical):
             yield Button("✎ Editar",      id="btn-edit",   classes="btn-edit")
             yield Button("✕ Desvincular", id="btn-delete", classes="btn-delete")
         with Horizontal(classes="filter-bar"):
-            yield Button("Ver Todos", id="btn-filter-all", classes="btn-filter -active-filter")
+            yield Button("Ver Todos",   id="btn-filter-all",  classes="btn-filter -active-filter")
             yield Button("Termination", id="btn-filter-term", classes="btn-filter")
             yield Button("Passthrough", id="btn-filter-pass", classes="btn-filter")
         yield DataTable(id="domains-table", cursor_type="row")
@@ -136,7 +128,7 @@ class DomainsScreen(Vertical):
     def on_mount(self) -> None:
         self._current_filter = "all"
         t = self.query_one("#domains-table", DataTable)
-        t.add_columns("Domínio", "VM", "Tipo", "Backend", "Modo", "SSL")
+        t.add_columns("Domínio", "VM", "Modo", "Backend", "SSL")
         self.refresh_table()
 
     def refresh_table(self) -> None:
@@ -146,23 +138,31 @@ class DomainsScreen(Vertical):
         vms     = {v.nome: v for v in load_vms()}
         count   = 0
         for d in domains:
-            vm   = vms.get(d.vm_nome)
-            vm_display = d.vm_nome
+            vm = vms.get(d.vm_nome)
+
             if not vm:
                 vm_display = f"[red]Removido ({d.vm_nome})[/]"
-                modo = "[red]?[/]"
+                modo       = "?"
+                modo_disp  = "[red]?[/]"
             else:
-                modo = vm.modo
+                vm_display = d.vm_nome
+                modo       = vm.modo
+                modo_disp  = (
+                    "[cyan]TERMINATION[/]" if modo == "termination"
+                    else "[dim]PASSTHROUGH[/]"
+                )
 
             if hasattr(self, "_current_filter"):
                 if self._current_filter == "termination" and modo != "termination": continue
                 if self._current_filter == "passthrough" and modo != "passthrough": continue
 
-            ssl  = "[green]OK[/]" if d.has_cert else ("[dim]sem cert[/]" if modo == "termination" else "[dim]n/a[/]")
-            bp   = d.backend_port or "-"
-            t.add_row(d.dominio, vm_display, d.tipo, bp, modo, ssl, key=d.dominio)
+            ssl = "[green]OK[/]" if d.has_cert else (
+                "[red]sem cert[/]" if modo == "termination" else "[dim]n/a[/]"
+            )
+            bp = d.backend_port or "-"
+            t.add_row(d.dominio, vm_display, modo_disp, bp, ssl, key=d.dominio)
             count += 1
-            
+
         filter_str = f" | Filtro: {self._current_filter.upper()}" if hasattr(self, "_current_filter") else ""
         self.query_one("#dom-status-bar", Static).update(f"  {count} domínio(s) listado(s){filter_str}")
 
@@ -176,6 +176,7 @@ class DomainsScreen(Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-add":
             self.app.push_screen(DomainFormModal(), self._on_save)
+
         elif event.button.id == "btn-edit":
             name = self._selected_domain()
             if name:
@@ -194,11 +195,12 @@ class DomainsScreen(Vertical):
                 )
             else:
                 self.app.notify("Selecione um domínio para desvincular.", severity="warning")
+
         elif event.button.id in ("btn-filter-all", "btn-filter-term", "btn-filter-pass"):
             for btn in self.query(".btn-filter"):
                 btn.remove_class("-active-filter")
             event.button.add_class("-active-filter")
-            
+
             if event.button.id == "btn-filter-all":
                 self._current_filter = "all"
             elif event.button.id == "btn-filter-term":

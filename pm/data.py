@@ -22,19 +22,24 @@ class VM:
     https_on:    str = "on"
     modo:        str = "passthrough"   # passthrough | termination
     descricao:   str = ""
+    ativo:       str = "on"            # on | off — controla se a VM é roteada pelo NGINX
 
     @classmethod
     def from_line(cls, line: str) -> Optional["VM"]:
         p = line.strip().split("|")
         if len(p) < 2:
             return None
-        while len(p) < 8:
+        while len(p) < 9:
             p.append("")
-        return cls(*p[:8])
+        # Retrocompatibilidade: garante default "on" para campo ativo vazio
+        if not p[8]:
+            p[8] = "on"
+        return cls(*p[:9])
 
     def to_line(self) -> str:
         return "|".join([self.nome, self.ip, self.porta_http, self.porta_https,
-                         self.http_on, self.https_on, self.modo, self.descricao])
+                         self.http_on, self.https_on, self.modo, self.descricao,
+                         self.ativo])
 
     @property
     def cert_count(self) -> int:

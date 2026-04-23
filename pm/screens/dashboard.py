@@ -53,24 +53,32 @@ class DashboardScreen(ScrollableContainer):
         # VMs table
         t = self.query_one("#dash-vms-table", DataTable)
         t.clear(columns=True)
-        t.add_columns("Nome", "IP", "HTTP", "HTTPS", "Modo", "Domínios")
+        t.add_columns("Status", "Nome", "IP", "HTTP", "HTTPS", "Modo", "Domínios")
         for vm in vms:
             dom_count = sum(1 for d in domains if d.vm_nome == vm.nome)
-            http_s  = f"[green]{vm.porta_http}[/]"  if vm.http_on  == "on" else "[red]✕[/]"
-            https_s = f"[green]{vm.porta_https}[/]" if vm.https_on == "on" else "[red]✕[/]"
-            modo_s  = f"[cyan]{vm.modo}[/]"
-            t.add_row(vm.nome, vm.ip, http_s, https_s, modo_s, str(dom_count))
+            status  = "[green]● Ativo[/]"   if vm.ativo   == "on" else "[red]○ Inativo[/]"
+            http_s  = "✓" if vm.http_on  == "on" else "❌"
+            https_s = "✓"  # HTTPS sempre ativo
+            modo_s  = "[cyan]TERMINATION[/]" if vm.modo == "termination" else "[dim]PASSTHROUGH[/]"
+            t.add_row(status, vm.nome, vm.ip, http_s, https_s, modo_s, str(dom_count))
 
         # Domains table
         t2 = self.query_one("#dash-domains-table", DataTable)
         t2.clear(columns=True)
-        t2.add_columns("Domínio", "VM", "Tipo", "Backend", "Modo", "SSL")
+        t2.add_columns("Domínio", "VM", "Modo", "Backend", "SSL")
         for d in domains:
             vm = next((v for v in vms if v.nome == d.vm_nome), None)
-            modo   = vm.modo if vm else "?"
-            ssl_s  = "[green]OK[/]" if d.has_cert else "[dim]sem cert[/]"
-            bp     = d.backend_port or "-"
-            t2.add_row(d.dominio, d.vm_nome, d.tipo, bp, modo, ssl_s)
+            if not vm:
+                vm_display = f"[red]Removido ({d.vm_nome})[/]"
+                modo_s     = "[red]?[/]"
+            else:
+                vm_display = d.vm_nome
+                modo_s     = "[cyan]TERMINATION[/]" if vm.modo == "termination" else "[dim]PASSTHROUGH[/]"
+            ssl_s = "[green]✓ OK[/]" if d.has_cert else (
+                "[red]sem cert[/]" if (vm and vm.modo == "termination") else "[dim]n/a[/]"
+            )
+            bp = d.backend_port or "-"
+            t2.add_row(d.dominio, vm_display, modo_s, bp, ssl_s)
 
         # Log
         log = read_log(20)

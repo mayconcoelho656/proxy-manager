@@ -27,63 +27,99 @@ def _header() -> list[str]:
 
 
 def _gen_http() -> str:
+    """
+    Porta 80 (HTTP):
+    - Termination: serve /.well-known/acme-challenge (Certbot) e redireciona tudo mais para HTTPS.
+    - Passthrough: encaminha o tráfego HTTP para a VM (stream/proxy_pass) se http_on == "on".
+    """
     lines = _header()
     for d in load_domains():
-        if d.tipo == "https":
-            continue
         vm = get_vm(d.vm_nome)
-        if not vm or vm.http_on == "off":
+        if not vm or vm.http_on == "off" or vm.ativo != "on":
             continue
+
         lines += [f"server {{", f"    listen 80;", f"    server_name {d.dominio};", ""]
+
         if vm.modo == "termination":
-            lines += ["    location /.well-known/acme-challenge/ {",
-                      "        root /var/www/certbot;", "    }"]
+            # Sempre serve o acme-challenge para o Certbot
+            lines += [
+                "    location /.well-known/acme-challenge/ {",
+                "        root /var/www/certbot;",
+                "    }",
+            ]
             cert, _ = d.cert_path
             if cert:
-                lines += ["    location / {",
-                          "        return 301 https://$host$request_uri;", "    }"]
+                # Certificado emitido: redireciona HTTP → HTTPS
+                lines += [
+                    "    location / {",
+                    "        return 301 https://$host$request_uri;",
+                    "    }",
+                ]
             else:
+                # Sem certificado ainda: serve direto via HTTP enquanto aguarda Certbot
                 bp = d.backend_port or "80"
-                lines += ["    location / {",
-                          f"        proxy_pass http://{vm.ip}:{bp};",
-                          "        proxy_set_header Host $host;",
-                          "        proxy_set_header X-Real-IP $remote_addr;", "    }"]
+                lines += [
+                    "    location / {",
+                    f"        proxy_pass http://{vm.ip}:{bp};",
+                    "        proxy_set_header Host $host;",
+                    "        proxy_set_header X-Real-IP $remote_addr;",
+                    "    }",
+                ]
         else:
-            lines += ["    location / {",
-                      f"        proxy_pass http://{vm.ip}:{vm.porta_http};",
-                      "        proxy_set_header Host $host;",
-                      "        proxy_set_header X-Real-IP $remote_addr;",
-                      "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-                      "    }"]
+            # Passthrough: encaminha HTTP direto para a VM
+            lines += [
+                "    location / {",
+                f"        proxy_pass http://{vm.ip}:{vm.porta_http};",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "    }",
+            ]
+
         lines += ["}", ""]
     return "\n".join(lines)
 
 
 def _gen_stream() -> str:
+    """
+    Porta 443 (HTTPS) via stream/SNI:
+    - Passthrough: encaminha o pacote HTTPS lacrado direto para a VM (a VM resolve o SSL).
+    - Termination: redireciona para o listener interno do Porteiro (porta TERMINATION_PORT).
+    """
     lines = _header() + ["stream {", "    map $ssl_preread_server_name $backend_https {"]
     for d in load_domains():
-        if d.tipo == "http":
-            continue
         vm = get_vm(d.vm_nome)
-        if not vm or vm.https_on == "off":
+        if not vm or vm.https_on == "off" or vm.ativo != "on":
             continue
         if vm.modo == "passthrough":
             lines.append(f"        {d.dominio}    {vm.ip}:{vm.porta_https};")
         else:
+            # Termination: entrega ao listener SSL interno do Porteiro
             lines.append(f"        {d.dominio}    127.0.0.1:{TERMINATION_PORT};")
-    lines += ["    }", "", "    server {", "        listen 443;",
-              "        ssl_preread on;", "        proxy_pass $backend_https;",
-              "    }", "}"]
+
+    lines += [
+        "    }",
+        "",
+        "    server {",
+        "        listen 443;",
+        "        ssl_preread on;",
+        "        proxy_pass $backend_https;",
+        "    }",
+        "}",
+    ]
     return "\n".join(lines)
 
 
 def _gen_termination() -> str:
+    """
+    Listener SSL interno (porta TERMINATION_PORT):
+    - Recebe conexões HTTPS do stream, descriptografa o SSL com o certificado do domínio
+      e encaminha via HTTP simples para a porta do app na VM.
+    """
     lines = _header()
     for d in load_domains():
-        if d.tipo == "http":
-            continue
         vm = get_vm(d.vm_nome)
-        if not vm or vm.https_on == "off" or vm.modo != "termination":
+        if not vm or vm.https_on == "off" or vm.modo != "termination" or vm.ativo != "on":
             continue
         cert, key = d.cert_path
         if not cert or not key:
