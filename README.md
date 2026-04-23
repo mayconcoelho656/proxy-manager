@@ -1,7 +1,7 @@
 # Proxy Manager — Porteiro NGINX 🚪
 
 **Gerenciador de proxy reverso e SSL via terminal (TUI) para Linux**  
-Versão **1.1 Beta** · Baseado em [Textual](https://github.com/Textualize/textual) · Python 3 · NGINX
+Versão **1.2 Beta** · Baseado em [Textual](https://github.com/Textualize/textual) · Python 3 · NGINX
 
 > [!CAUTION]
 > **PROJETO EM DESENVOLVIMENTO (ALPHA/BETA)**  
@@ -287,6 +287,15 @@ MIT © 2025 — Livre para uso, modificação e distribuição.
 ---
 
 ## Changelog
+
+### v1.2 Beta
+- **NGINX:** Corrigido gerador HTTP para VMs Passthrough — `/.well-known/acme-challenge/` é sempre encaminhado para a VM mesmo com HTTP desativado, permitindo que o proxy interno emita certificados via Let's Encrypt
+- **Status:** Adicionado botão `🌐 Testar Portas 80/443` que verifica localmente (via `ss`) e externamente (via IP público) se o Porteiro está acessível da internet
+- **Instalador v1.2:** Três correções críticas:
+  - `libnginx-mod-stream` agora é sempre instalado via apt (garantindo o arquivo em `modules-enabled/`)
+  - Include do bloco `stream {}` adicionado ao **final** do `nginx.conf` (fora do `http{}`), corrigindo erro `unknown directive "stream"`
+  - Site `default` do NGINX desativado automaticamente (evita interceptação de requisições na porta 80)
+- **Instalador:** Suporte explícito a Debian 13
 
 ### v1.1 Beta
 - **VMs:** Adicionado campo de status ativo/inativo com toggle interativo e recarga automática do NGINX

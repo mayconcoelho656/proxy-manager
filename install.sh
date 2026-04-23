@@ -27,7 +27,7 @@ _sep()  { echo -e "${CYAN}──────────────────
 echo ""
 echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}${BOLD}║   Proxy Manager — Porteiro NGINX             ║${NC}"
-echo -e "${CYAN}${BOLD}║   Instalador v1.1                            ║${NC}"
+echo -e "${CYAN}${BOLD}║   Instalador v1.2                            ║${NC}"
 echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 
