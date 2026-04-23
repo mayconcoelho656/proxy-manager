@@ -1,7 +1,7 @@
 # Proxy Manager — Porteiro NGINX 🚪
 
 **Gerenciador de proxy reverso e SSL via terminal (TUI) para Linux**  
-Baseado em [Textual](https://github.com/Textualize/textual) · Python 3 · NGINX
+Versão **1.1 Beta** · Baseado em [Textual](https://github.com/Textualize/textual) · Python 3 · NGINX
 
 > [!CAUTION]
 > **PROJETO EM DESENVOLVIMENTO (ALPHA/BETA)**  
@@ -100,7 +100,7 @@ Internet (1 IP público)
 
 | Componente | Mínimo |
 |---|---|
-| Sistema Operacional | Debian 11/12 ou Ubuntu 22.04/24.04 |
+| Sistema Operacional | Debian 11 / 12 / 13, Ubuntu 22.04 / 24.04 |
 | Python | 3.10+ |
 | NGINX | Qualquer versão recente com módulo `stream` |
 | Certbot | Para emissão de certificados Let's Encrypt |
@@ -246,24 +246,24 @@ proxy-manager/
 
 | Arquivo/Dir | Conteúdo |
 |---|---|
-| `vms.conf` | VMs cadastradas (pipe-separated) |
-| `domains.conf` | Domínios vinculados |
-| `backups/` | Backups automáticos das configs NGINX |
-| `certs/<domínio>/` | Certificados importados manualmente |
+| `vms.conf` | VMs cadastradas — campos: `nome\|ip\|porta_http\|porta_https\|http_on\|https_on\|modo\|descricao\|ativo` |
+| `domains.conf` | Domínios vinculados — campos: `dominio\|vm_nome\|tipo\|backend_port\|email_ssl\|auto_renew` |
+| `backups/` | Backups automáticos das configs NGINX (criados antes de cada geração) |
+| `certs/<domínio>/` | Certificados importados manualmente (`fullchain.pem` + `privkey.pem`) |
 
 ---
 
 ## Configurações NGINX geradas
 
-O Porteiro gera e mantém automaticamente 3 arquivos:
+O Porteiro gera e mantém automaticamente 3 arquivos a cada "Aplicar + Recarregar":
 
 | Arquivo | Função |
 |---|---|
-| `/etc/nginx/conf.d/porteiro-http.conf` | Bloco HTTP (porta 80), redirects e proxy |
-| `/etc/nginx/conf.d/porteiro-termination.conf` | Bloco HTTPS com SSL termination |
-| `/etc/nginx/stream.conf.d/porteiro-stream.conf` | Bloco stream para SNI passthrough |
+| `/etc/nginx/conf.d/porteiro-http.conf` | **Porta 80:** webroot Certbot (Let's Encrypt), redirect 301→HTTPS (Termination) e proxy HTTP direto (Passthrough) |
+| `/etc/nginx/conf.d/porteiro-termination.conf` | **Listener SSL interno (porta 4430):** descriptografa SSL com o certificado do domínio e encaminha HTTP puro para a porta do app na VM |
+| `/etc/nginx/stream.conf.d/porteiro-stream.conf` | **Roteamento SNI (porta 443):** Passthrough → encaminha o pacote HTTPS lacrado direto para a VM; Termination → redireciona para o listener interno (porta 4430) |
 
-> ⚠️ Não edite esses arquivos manualmente — eles são regenerados pelo painel.
+> ⚠️ Não edite esses arquivos manualmente — eles são regenerados pelo painel a cada aplicação.
 
 ---
 
@@ -283,3 +283,24 @@ O Porteiro gera e mantém automaticamente 3 arquivos:
 ## Licença
 
 MIT © 2025 — Livre para uso, modificação e distribuição.
+
+---
+
+## Changelog
+
+### v1.1 Beta
+- **VMs:** Adicionado campo de status ativo/inativo com toggle interativo e recarga automática do NGINX
+- **VMs:** Seletor HTTPS removido — HTTPS é sempre ativo; seletor HTTP exibido apenas no modo Passthrough
+- **VMs:** Novo botão 🌐 Domínios para visualizar domínios vinculados sem sair da aba
+- **VMs:** Validação de nomes e IPs duplicados no wizard de criação e no modal de edição
+- **Domínios:** Removido campo "Tipo de Tráfego" — o comportamento é determinado apenas pelo modo da VM
+- **Domínios:** Campo "Porta do app" exibido automaticamente apenas para VMs em modo Termination
+- **Domínios:** Domínios vinculados a VMs excluídas exibem `Removido` em vez de desaparecer
+- **Dashboard:** Tabelas atualizadas com coluna Status, ✓/❌ para portas, e remoção da coluna Tipo
+- **NGINX:** Gerador simplificado — comportamento determinado pelo modo da VM, não por filtro de domínio
+- **NGINX:** VMs inativas são ignoradas na geração de configuração
+- **Geral:** Atualização automática dos dados ao alternar entre abas
+- **Instalador:** Versão v1.1, suporte a Debian 13
+
+### v1.0 Alpha
+- Versão inicial com suporte a VMs, domínios, SSL (Let's Encrypt e importação manual), dashboard e tutorial
